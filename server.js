@@ -34,7 +34,7 @@ function walkFileTree(id, connection, fileTree) {
                 fileTree.children[node.name] = walkFileTree(fileTree.children[node.name].id, connection, fileTree.children[node.name]);
             } else {
                 fileTree.children[node.name] = {"type": "file", "parent":fileTree,"children":{},"permissions":{"mode": 0100666, "nlink": 1,"size": node.size}, "id": parseInt(node.id), "name": node.name};
-                //console.log(node);
+                console.log(node);
             }
         }
     });
@@ -68,7 +68,7 @@ function uploadWithoutOverwrite(name, path, fileTree, connection, callback) {
         console.log('File exists: '+name+' '+webroot.id);
     } else {
         console.log('uploadFile '+name+' '+webroot.id);
-        connection.uploadFile(name, webroot.id, null, callback);
+        connection.uploadFile(name, webroot.id, {timeout: 12000000}, callback);
     }
 }
 (function main() {
@@ -82,6 +82,7 @@ function uploadWithoutOverwrite(name, path, fileTree, connection, callback) {
         client_secret: gsms.client_secret,
         host:          gsms.host,
         port:          gsms.port,
+        timeout:       0,
     }, 10);
 
     connection = box.getConnection(options.email);
@@ -94,7 +95,7 @@ function uploadWithoutOverwrite(name, path, fileTree, connection, callback) {
         xdg_open(connection.getAuthURL());
     }
 
-    connection.ready(function() {setTimeout(function () {
+    connection.ready(function() {
         // Save gsms
         gsms.access_token = connection.access_token;
         gsms.refresh_token = connection.refresh_token;
@@ -114,5 +115,5 @@ function uploadWithoutOverwrite(name, path, fileTree, connection, callback) {
                 },2000);
             });
         });
-    }, 1000)});
+    });
 })();

@@ -7,7 +7,7 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
-   "boxsdk": ">=0.2.11"
+   "boxsdk": ">=0.2.11",
    "request": ">=0"
   },
   "author": "Linus DasSarma (__@umbc.edu)",
