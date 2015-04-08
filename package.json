@@ -7,8 +7,10 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
-   "boxsdk": ">=0.2.11",
-   "request": ">=0"
+   "box-sdk":   ">=0",
+   "open":      ">=0",
+   "form-data": ">=0",
+   "request":   ">=0"
   },
   "author": "Linus DasSarma (__@umbc.edu)",
   "license": "ISC"

@@ -52,11 +52,21 @@ function getByPath(name, fileTree) {
 function uploadWithOverwrite(name, path, fileTree, connection, callback) {
     var webroot = getByPath(path.split('/'), fileTree);
     console.log(webroot.children);
-    if (webroot.children['name']) {
+    if (webroot.children[name]) {
         console.log('uploadFileNewVersion '+name+' '+webroot.id);
         connection.uploadFileNewVersion(name, webroot.id, null, callback);
     } else {
         console.log('uploadFile '+name+' '+webroot.id);
+        console.log('curl https://upload.box.com/api/2.0/files/content -H "Authorization: Bearer '+connection.access_token+'" -X POST -F attributes=\'{"name":"'+name+'", "parent":{"id":"'+webroot.id+'"}}\' -F file=@'+name);
+        var form = require('form-data');
+        form.append('name', name);
+        form.append('parent', {'id': webroot.id});
+        form.append('file', fs.createReadStream(name));
+        form.getLength(function (e,length) {
+            var r = require('request').post('https://upload.box.com/api/2.0/files/content', null);
+            r._form = form;
+            r.setHeader('content-length', length);
+        });
         connection.uploadFile(name, webroot.id, null, callback);
     }
 }
@@ -99,21 +109,30 @@ function uploadWithoutOverwrite(name, path, fileTree, connection, callback) {
         // Save gsms
         gsms.access_token = connection.access_token;
         gsms.refresh_token = connection.refresh_token;
-        fs.writeFile('gsms.json', JSON.stringify(gsms, null, 4), function(err) {
-            // Dummy call to refresh tokens if neccessary
-            connection.getFolderInfo(0, function (body) {
-                fileTree = {
-                    "/": {
-                        "type":     "folder",
-                        "parent":   fileTree,
-                        "children": {},
-                        "id":       0
-                    }};
-                fileTree["/"] = walkFileTree(0, connection, fileTree["/"]);
-                setTimeout(function(){
-                    uploadWithOverwrite(options.file, options.webroot, fileTree, connection, function (err) {if (err) connection.log.info(err);process.exit();});
-                },2000);
-            });
+        // Dummy call to refresh tokens if neccessary
+        connection.getFolderInfo(0, function (body) {
+            var wait = 0;
+            if (!connection.isAuthenticated()) {
+                xdg_open(connection.getAuthURL());
+                wait = 15*1000;
+            }
+            setTimeout(function() {
+                gsms.access_token = connection.access_token;
+                gsms.refresh_token = connection.refresh_token;
+                fs.writeFile('gsms.json', JSON.stringify(gsms, null, 4), function(err) {
+                    fileTree = {
+                        "/": {
+                            "type":     "folder",
+                            "parent":   fileTree,
+                            "children": {},
+                            "id":       0
+                        }};
+                    fileTree["/"] = walkFileTree(0, connection, fileTree["/"]);
+                    setTimeout(function(){
+                        uploadWithOverwrite(options.file, options.webroot, fileTree, connection, function (err) {if (err) connection.log.info(err);process.exit();});
+                    },2000);}
+                    );
+            }, wait);
         });
     });
 })();
