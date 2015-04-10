@@ -58,16 +58,21 @@ function uploadWithOverwrite(name, path, fileTree, connection, callback) {
     } else {
         console.log('uploadFile '+name+' '+webroot.id);
         console.log('curl https://upload.box.com/api/2.0/files/content -H "Authorization: Bearer '+connection.access_token+'" -X POST -F attributes=\'{"name":"'+name+'", "parent":{"id":"'+webroot.id+'"}}\' -F file=@'+name);
-        var form = require('form-data');
-        form.append('name', name);
-        form.append('parent', {'id': webroot.id});
+        var FormData = require('form-data');
+        var form = new FormData();
+        form.append('attributes', '{"name":"'+name+'", "id": '+webroot.id+'}');
         form.append('file', fs.createReadStream(name));
-        form.getLength(function (e,length) {
-            var r = require('request').post('https://upload.box.com/api/2.0/files/content', null);
-            r._form = form;
-            r.setHeader('content-length', length);
+        form.submit({
+            protocol: 'https:',
+            host: 'upload.box.com',
+            path: '/api/2.0/files/content',
+            headers: {'Authorization': 'Bearer '+connection.access_token}
+        },
+        function(err, res) {
+            console.log(err);
+            console.log(res);
         });
-        connection.uploadFile(name, webroot.id, null, callback);
+        // connection.uploadFile(name, webroot.id, null, callback);
     }
 }
 
