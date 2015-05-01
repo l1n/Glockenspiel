@@ -24,9 +24,13 @@ function parseArgs() {
     if (args.length < 3) {
         return false;
     }
-    options.email   = args[2];
-    options.file    = args[3];
-    options.webroot = args[4] || '/';
+    options.file    = args[2];
+    options.webroot = args[3] || '/';
+    options.email   = args[4];
+    if (options.email)
+        gsms.email  = options.email;
+    if (!gsms.log)
+        gsms.log    = 10;
     return true;
 }
 
@@ -36,6 +40,7 @@ function usage() {
 }
 
 function walkFileTree(id, connection, fileTree, cb) {
+    connection.log.debug('getFolderItems '+id);
     connection.getFolderItems(id, {'fields': ['name', 'id'].join(',')}, function (error, body) {
         body=eval(body);
         async.each(body.entries, function (node, callback) {
@@ -48,13 +53,13 @@ function walkFileTree(id, connection, fileTree, cb) {
                 });
             } else {
                 fileTree.children[node.name].type = "file";
+                connection.log.debug('getFileInfo '+node.id);
                 connection.getFileInfo(parseInt(node.id), function(e, res) {
                     res = eval(res);
                     fileTree.children[node.name].etag = parseInt(res.etag);
                     callback(null, fileTree);
                 });
             }
-            // console.log(node);
         }, function (err, result) {
             cb(null, fileTree);
         });
@@ -64,7 +69,6 @@ function walkFileTree(id, connection, fileTree, cb) {
 function getByPath(name, fileTree) {
     var node = fileTree["/"];
     for (var i = 0; i < name.length; i++) {
-        console.log(node);
         if (name[i] !== '') node = node.children[name[i]];
     }
     return node;
@@ -73,12 +77,12 @@ function getByPath(name, fileTree) {
 function uploadWithOverwrite(name, path, fileTree, connection, callback) {
     var webroot = getByPath(path.split('/'), fileTree);
     if (webroot.children[name]) {
-        console.log('uploadFileNewVersion '+name+' '+webroot.id);
+        connection.log.debug('uploadFileNewVersion '+name+' '+webroot.id);
         var curl = 'curl https://upload.box.com/api/2.0/files/'+webroot.children[name].id+'/content -H "Authorization: Bearer '+connection.access_token+'" -F file=@'+name;
         var exec = require('child_process').exec, child;
         child = exec(curl, callback);
     } else {
-        console.log('uploadFile '+name+' '+webroot.id);
+        connection.log.debug('uploadFile '+name+' '+webroot.id);
         var curl = 'curl https://upload.box.com/api/2.0/files/content -H "Authorization: Bearer '+connection.access_token+'" -X POST -F attributes=\'{"name":"'+name+'", "parent":{"id":"'+webroot.id+'"}}\' -F file=@'+name;
         var exec = require('child_process').exec, child;
         child = exec(curl, callback);
@@ -88,9 +92,9 @@ function uploadWithOverwrite(name, path, fileTree, connection, callback) {
 function uploadWithoutOverwrite(name, path, fileTree, connection, callback) {
     var webroot = getByPath(path.split('/'), fileTree);
     if (webroot.children['name']) {
-        console.log('File exists: '+name+' '+webroot.id);
+        connection.log.error('File exists: '+name+' '+webroot.id);
     } else {
-        console.log('uploadFile '+name+' '+webroot.id);
+        connection.log.debug('uploadFile '+name+' '+webroot.id);
         var curl = 'curl https://upload.box.com/api/2.0/files/content -H "Authorization: Bearer '+connection.access_token+'" -X POST -F attributes=\'{"name":"'+name+'", "parent":{"id":"'+webroot.id+'"}}\' -F file=@'+name;
         var exec = require('child_process').exec, child;
         child = exec(curl, callback);
@@ -108,9 +112,9 @@ function uploadWithoutOverwrite(name, path, fileTree, connection, callback) {
         host:          gsms.host,
         port:          gsms.port,
         timeout:       0,
-    }, 10);
+    }, gsms.log);
 
-    connection = box.getConnection(options.email||gsms.email);
+    connection = box.getConnection(gsms.email);
 
     // Restore access_token and refresh_token if possible
     connection._setTokens({access_token: gsms.access_token, refresh_token: gsms.refresh_token, expires_in: 1});
@@ -144,7 +148,6 @@ function uploadWithoutOverwrite(name, path, fileTree, connection, callback) {
                         }};
                     walkFileTree(0, connection, fileTree["/"], function (err, root) {
                         fileTree["/"] = root;
-                        console.log('FINAL FILE TREE: '+fileTree);
                         uploadWithOverwrite(options.file, options.webroot, fileTree, connection, function (err) {if (err) connection.log.info(err);process.exit();});
                     });
                 });
