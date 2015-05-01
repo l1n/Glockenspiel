@@ -1,5 +1,6 @@
 var fs = require('fs');
 var box_sdk = require('box-sdk');
+var async = require('async');
 
 var options = {}; // See parseArgs()
 var fileTree = {};
@@ -34,27 +35,36 @@ function usage() {
     console.log('Examp: node server.js user@example.com file.txt /some/path');
 }
 
-function walkFileTree(id, connection, fileTree) {
+function walkFileTree(id, connection, fileTree, cb) {
     connection.getFolderItems(id, {'fields': ['name', 'id'].join(',')}, function (error, body) {
         body=eval(body);
-        for(var i = 0; i < body.total_count; i++) {
-            var node = body.entries[i];
-            // console.log(node);
+        async.each(body.entries, function (node, callback) {
+            fileTree.children[node.name] = {"parent":fileTree,"children":{}, "id": parseInt(node.id), "name": node.name};
             if (node.type === 'folder') {
-                fileTree.children[node.name] = {"type": "folder","parent":fileTree,"children":{},"permissions":{"mode": 040777, "nlink": 1,"size": 4096}, "id": parseInt(node.id), "name": node.name};
-                fileTree.children[node.name] = walkFileTree(fileTree.children[node.name].id, connection, fileTree.children[node.name]);
+                fileTree.children[node.name].type = "folder";
+                walkFileTree(fileTree.children[node.name].id, connection, fileTree.children[node.name], function (e, ft) {
+                    fileTree.children[node.name] = ft;
+                    callback(null, fileTree);
+                });
             } else {
-                fileTree.children[node.name] = {"type": "file", "parent":fileTree,"children":{},"permissions":{"mode": 0100666, "nlink": 1,"size": node.size}, "id": parseInt(node.id), "name": node.name};
-                // console.log(node);
+                fileTree.children[node.name].type = "file";
+                connection.getFileInfo(parseInt(node.id), function(e, res) {
+                    res = eval(res);
+                    fileTree.children[node.name].etag = parseInt(res.etag);
+                    callback(null, fileTree);
+                });
             }
-        }
+            // console.log(node);
+        }, function (err, result) {
+            cb(null, fileTree);
+        });
     });
-    return fileTree;
 }
+
 function getByPath(name, fileTree) {
     var node = fileTree["/"];
-    console.log(node);
     for (var i = 0; i < name.length; i++) {
+        console.log(node);
         if (name[i] !== '') node = node.children[name[i]];
     }
     return node;
@@ -62,32 +72,28 @@ function getByPath(name, fileTree) {
 
 function uploadWithOverwrite(name, path, fileTree, connection, callback) {
     var webroot = getByPath(path.split('/'), fileTree);
-    console.log(webroot.children);
     if (webroot.children[name]) {
         console.log('uploadFileNewVersion '+name+' '+webroot.id);
-        connection.uploadFileNewVersion(name, webroot.id, null, callback);
+        var curl = 'curl https://upload.box.com/api/2.0/files/'+webroot.children[name].id+'/content -H "Authorization: Bearer '+connection.access_token+'" -F file=@'+name;
+        var exec = require('child_process').exec, child;
+        child = exec(curl, callback);
     } else {
         console.log('uploadFile '+name+' '+webroot.id);
-        console.log('curl https://upload.box.com/api/2.0/files/content -H "Authorization: Bearer '+connection.access_token+'" -X POST -F attributes=\'{"name":"'+name+'", "parent":{"id":"'+webroot.id+'"}}\' -F file=@'+name);
+        var curl = 'curl https://upload.box.com/api/2.0/files/content -H "Authorization: Bearer '+connection.access_token+'" -X POST -F attributes=\'{"name":"'+name+'", "parent":{"id":"'+webroot.id+'"}}\' -F file=@'+name;
         var exec = require('child_process').exec, child;
-        child = exec('curl https://upload.box.com/api/2.0/files/content -H "Authorization: Bearer '+connection.access_token+'" -X POST -F attributes=\'{"name":"'+name+'", "parent":{"id":"'+webroot.id+'"}}\' -F file=@'+name, function (error, stdout, stderr) {
-                console.log('stdout: ' + stdout);
-                console.log('stderr: ' + stderr);
-                if (error !== null) {
-                    console.log('exec error: ' + error);
-                }
-                });
+        child = exec(curl, callback);
     }
 }
 
 function uploadWithoutOverwrite(name, path, fileTree, connection, callback) {
     var webroot = getByPath(path.split('/'), fileTree);
-    console.log(webroot.children);
     if (webroot.children['name']) {
         console.log('File exists: '+name+' '+webroot.id);
     } else {
         console.log('uploadFile '+name+' '+webroot.id);
-        connection.uploadFile(name, webroot.id, {timeout: 12000000}, callback);
+        var curl = 'curl https://upload.box.com/api/2.0/files/content -H "Authorization: Bearer '+connection.access_token+'" -X POST -F attributes=\'{"name":"'+name+'", "parent":{"id":"'+webroot.id+'"}}\' -F file=@'+name;
+        var exec = require('child_process').exec, child;
+        child = exec(curl, callback);
     }
 }
 (function main() {
@@ -104,7 +110,7 @@ function uploadWithoutOverwrite(name, path, fileTree, connection, callback) {
         timeout:       0,
     }, 10);
 
-    connection = box.getConnection(options.email);
+    connection = box.getConnection(options.email||gsms.email);
 
     // Restore access_token and refresh_token if possible
     connection._setTokens({access_token: gsms.access_token, refresh_token: gsms.refresh_token, expires_in: 1});
@@ -122,7 +128,7 @@ function uploadWithoutOverwrite(name, path, fileTree, connection, callback) {
         connection.getFolderInfo(0, function (body) {
             var wait = 0;
             if (!connection.isAuthenticated()) {
-                xdg_open(connection.getAuthURL());
+                console.log(connection.getAuthURL());
                 wait = 15*1000;
             }
             setTimeout(function() {
@@ -136,11 +142,12 @@ function uploadWithoutOverwrite(name, path, fileTree, connection, callback) {
                             "children": {},
                             "id":       0
                         }};
-                    fileTree["/"] = walkFileTree(0, connection, fileTree["/"]);
-                    setTimeout(function(){
+                    walkFileTree(0, connection, fileTree["/"], function (err, root) {
+                        fileTree["/"] = root;
+                        console.log('FINAL FILE TREE: '+fileTree);
                         uploadWithOverwrite(options.file, options.webroot, fileTree, connection, function (err) {if (err) connection.log.info(err);process.exit();});
-                    },2000);}
-                    );
+                    });
+                });
             }, wait);
         });
     });
