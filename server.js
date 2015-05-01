@@ -1,12 +1,23 @@
 var fs = require('fs');
-var request = require('request');
 var box_sdk = require('box-sdk');
-var xdg_open = require('open');
 
 var options = {}; // See parseArgs()
 var fileTree = {};
 
-var gsms = require('./gsms');
+var gsms;
+try {
+    gsms = require('./gsms');
+} catch (e) {
+    gsms = {
+        "email": "",
+        "host": "localhost",
+        "port": 5000,
+        "client_id": "tul5x43dwghbz7dque6h0z04py06b4oc",
+        "client_secret": "IWQeQ09keAHchQlGGllzOoAJlIXvtF4g",
+        "access_token": "",
+        "refresh_token": ""
+    };
+}
 function parseArgs() {
     var args = process.argv;
     if (args.length < 3) {
@@ -34,7 +45,7 @@ function walkFileTree(id, connection, fileTree) {
                 fileTree.children[node.name] = walkFileTree(fileTree.children[node.name].id, connection, fileTree.children[node.name]);
             } else {
                 fileTree.children[node.name] = {"type": "file", "parent":fileTree,"children":{},"permissions":{"mode": 0100666, "nlink": 1,"size": node.size}, "id": parseInt(node.id), "name": node.name};
-                console.log(node);
+                // console.log(node);
             }
         }
     });
@@ -58,21 +69,6 @@ function uploadWithOverwrite(name, path, fileTree, connection, callback) {
     } else {
         console.log('uploadFile '+name+' '+webroot.id);
         console.log('curl https://upload.box.com/api/2.0/files/content -H "Authorization: Bearer '+connection.access_token+'" -X POST -F attributes=\'{"name":"'+name+'", "parent":{"id":"'+webroot.id+'"}}\' -F file=@'+name);
-        //        var FormData = require('form-data');
-        //        var form = new FormData();
-        //        form.append('attributes', '{"name":"'+name+'", "id": '+webroot.id+'}');
-        //        form.append('file', fs.createReadStream(name));
-        //        form.submit({
-        //            protocol: 'https:',
-        //            host: 'upload.box.com',
-        //            path: '/api/2.0/files/content',
-        //            headers: {'Authorization': 'Bearer '+connection.access_token}
-        //        },
-        //        function(err, res) {
-        //            console.log(err);
-        //            console.log(res);
-        //        });
-        // connection.uploadFile(name, webroot.id, null, callback);
         var exec = require('child_process').exec, child;
         child = exec('curl https://upload.box.com/api/2.0/files/content -H "Authorization: Bearer '+connection.access_token+'" -X POST -F attributes=\'{"name":"'+name+'", "parent":{"id":"'+webroot.id+'"}}\' -F file=@'+name, function (error, stdout, stderr) {
                 console.log('stdout: ' + stdout);
@@ -82,71 +78,70 @@ function uploadWithOverwrite(name, path, fileTree, connection, callback) {
                 }
                 });
     }
+}
+
+function uploadWithoutOverwrite(name, path, fileTree, connection, callback) {
+    var webroot = getByPath(path.split('/'), fileTree);
+    console.log(webroot.children);
+    if (webroot.children['name']) {
+        console.log('File exists: '+name+' '+webroot.id);
+    } else {
+        console.log('uploadFile '+name+' '+webroot.id);
+        connection.uploadFile(name, webroot.id, {timeout: 12000000}, callback);
+    }
+}
+(function main() {
+    if (!parseArgs()) {
+        usage();
+        return -1;
     }
 
-    function uploadWithoutOverwrite(name, path, fileTree, connection, callback) {
-        var webroot = getByPath(path.split('/'), fileTree);
-        console.log(webroot.children);
-        if (webroot.children['name']) {
-            console.log('File exists: '+name+' '+webroot.id);
-        } else {
-            console.log('uploadFile '+name+' '+webroot.id);
-            connection.uploadFile(name, webroot.id, {timeout: 12000000}, callback);
-        }
+    var box = box_sdk.Box({
+        client_id:     gsms.client_id,
+        client_secret: gsms.client_secret,
+        host:          gsms.host,
+        port:          gsms.port,
+        timeout:       0,
+    }, 10);
+
+    connection = box.getConnection(options.email);
+
+    // Restore access_token and refresh_token if possible
+    connection._setTokens({access_token: gsms.access_token, refresh_token: gsms.refresh_token, expires_in: 1});
+
+    //Navigate user to the auth URL if neccessary
+    if (!connection.isAuthenticated()) {
+        console.log(connection.getAuthURL());
     }
-    (function main() {
-        if (!parseArgs()) {
-            usage();
-            return -1;
-        }
 
-        var box = box_sdk.Box({
-            client_id:     gsms.client_id,
-            client_secret: gsms.client_secret,
-            host:          gsms.host,
-            port:          gsms.port,
-            timeout:       0,
-        }, 10);
-
-        connection = box.getConnection(options.email);
-
-        // Restore access_token and refresh_token if possible
-        connection._setTokens({access_token: gsms.access_token, refresh_token: gsms.refresh_token, expires_in: 1});
-
-        //Navigate user to the auth URL if neccessary
-        if (!connection.isAuthenticated()) {
-            console.log(connection.getAuthURL());
-            xdg_open(connection.getAuthURL());
-        }
-
-        connection.ready(function() {
-            // Save gsms
-            gsms.access_token = connection.access_token;
-            gsms.refresh_token = connection.refresh_token;
-            // Dummy call to refresh tokens if neccessary
-            connection.getFolderInfo(0, function (body) {
-                var wait = 0;
-                if (!connection.isAuthenticated()) {
-                    xdg_open(connection.getAuthURL());
-                    wait = 15*1000;
-                }
-                setTimeout(function() {
-                    gsms.access_token = connection.access_token;
-                    gsms.refresh_token = connection.refresh_token;
-                    fs.writeFile('gsms.json', JSON.stringify(gsms, null, 4), function(err) {
-                        fileTree = {
-                            "/": {
-                                "type":     "folder",
-                                "parent":   fileTree,
-                                "children": {},
-                                "id":       0
-                            }};
-                        fileTree["/"] = walkFileTree(0, connection, fileTree["/"]);
-                        setTimeout(function(){
-                            uploadWithOverwrite(options.file, options.webroot, fileTree, connection, function (err) {if (err) connection.log.info(err);process.exit();});
-                        },2000);}
-                        );
-                }, wait);
-            });
+    connection.ready(function() {
+        // Save gsms
+        gsms.access_token = connection.access_token;
+        gsms.refresh_token = connection.refresh_token;
+        // Dummy call to refresh tokens if neccessary
+        connection.getFolderInfo(0, function (body) {
+            var wait = 0;
+            if (!connection.isAuthenticated()) {
+                xdg_open(connection.getAuthURL());
+                wait = 15*1000;
+            }
+            setTimeout(function() {
+                gsms.access_token = connection.access_token;
+                gsms.refresh_token = connection.refresh_token;
+                fs.writeFile('gsms.json', JSON.stringify(gsms, null, 4), function(err) {
+                    fileTree = {
+                        "/": {
+                            "type":     "folder",
+                            "parent":   fileTree,
+                            "children": {},
+                            "id":       0
+                        }};
+                    fileTree["/"] = walkFileTree(0, connection, fileTree["/"]);
+                    setTimeout(function(){
+                        uploadWithOverwrite(options.file, options.webroot, fileTree, connection, function (err) {if (err) connection.log.info(err);process.exit();});
+                    },2000);}
+                    );
+            }, wait);
         });
-    })();
+    });
+})();
