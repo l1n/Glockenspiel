@@ -16,7 +16,7 @@ try {
 }
 function parseArgs() {
     var args = process.argv;
-    if (!gsms.email && args.length < 2)
+    if (!gsms.email && args.length < 3)
         return false;
     gsms.email = args[2];
     gsms.host = args[3]?args[3]:gsms.host?gsms.host:'localhost';
@@ -103,8 +103,9 @@ function walkFileTree(id, connection, fileTree, cb) {
                         "children": {},
                         "id":       0
                     }};
-                walkFileTree(0, connection, gsms.fileTree["/"], function (err, root) {
-                    gsms.fileTree["/"] = root;
+                // walkFileTree(0, connection, gsms.fileTree["/"], function (err, root) {
+                //     gsms.fileTree["/"] = root;
+                    console.log("Writing gsms.json...");
                     fs.writeFile('gsms.json', JSON.stringify(gsms), function(err) {
                         if (err) {
                             console.log('Error: '+err);
@@ -115,7 +116,7 @@ function walkFileTree(id, connection, fileTree, cb) {
                         box.stopServer(function(){});
                         return true;
                     });
-                });
+                // });
             }, wait);
         });
     });
